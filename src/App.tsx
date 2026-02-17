@@ -12,40 +12,25 @@ import {
 } from 'firebase/firestore';
 
 // --- GLOBAL SYNC LOGIC (UTC) ---
-
-// 1. Get the ISO Week ID based on UTC (Universal Time)
-// This ensures everyone sees the same "Week Number" regardless of timezone
 const getUTCWeekId = () => {
   const now = new Date();
-  // Create a copy of the date in UTC
   const date = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-  // Set to nearest Thursday: current date + 4 - current day number
-  // Make Sunday's day number 7
   date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
-  // Get first day of year
   const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  // Calculate full weeks to nearest Thursday
   const weekNo = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
-  
   return `${date.getUTCFullYear()}-W${weekNo}`;
 };
 
-// 2. Count down to next Monday 00:00 UTC
 const getTimeUntilUTCReset = () => {
   const now = new Date();
-  const currentDayUTC = now.getUTCDay(); // 0 (Sun) to 6 (Sat)
-  
-  // Calculate days until next Monday (1)
-  // If today is Monday (1), we want 7 days. If Sunday (0), we want 1 day.
+  const currentDayUTC = now.getUTCDay(); 
   const daysUntilMonday = (1 + 7 - currentDayUTC) % 7 || 7;
-  
   const nextMonday = new Date(Date.UTC(
     now.getUTCFullYear(),
     now.getUTCMonth(),
     now.getUTCDate() + daysUntilMonday,
     0, 0, 0, 0 
   ));
-
   return nextMonday.getTime() - now.getTime();
 };
 
@@ -73,7 +58,6 @@ export default function App() {
   const [newTask, setNewTask] = useState("");
   const [timeLeft, setTimeLeft] = useState("");
   
-  // Gets a consistent ID for everyone (e.g. "2026-W08")
   const weekId = getUTCWeekId();
 
   // 1. Auth & Initial Setup
@@ -101,14 +85,12 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Timer (Auto-Refresh Logic)
+  // 2. Timer (Auto-Refresh)
   useEffect(() => {
     const timer = setInterval(() => {
       const diff = getTimeUntilUTCReset();
-      
       if (diff <= 0) {
         setTimeLeft('Resetting...');
-        // Force reload to switch to the new Week ID
         window.location.reload();
       } else {
         const d = Math.floor(diff / (1000 * 60 * 60 * 24));
@@ -121,14 +103,10 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // 3. Listen to Tasks (Current UTC Week Only)
+  // 3. Listen to Tasks
   useEffect(() => {
     if (!user) return;
-    
-    // This query is the magic. It only asks for tasks that match THIS week ID.
-    // When weekId changes, this returns 0 tasks = "Vanish" effect.
     const q = query(collection(db, "tasks"), where("weekId", "==", weekId));
-    
     return onSnapshot(q, (snapshot) => {
       const tasksData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       tasksData.sort((a, b) => a.createdAt - b.createdAt);
@@ -153,11 +131,10 @@ export default function App() {
   const addTask = async (e) => {
     e.preventDefault();
     if (!newTask.trim()) return;
-    
     try {
       await addDoc(collection(db, "tasks"), {
         text: newTask,
-        weekId: weekId, // Saves with the UTC Week ID
+        weekId: weekId,
         createdAt: Date.now(),
         createdBy: user.uid,
         creatorName: user.displayName,
@@ -200,7 +177,15 @@ export default function App() {
   };
 
   const deleteTask = async (id) => {
-    if (confirm("Delete this task?")) await deleteDoc(doc(db, "tasks", id));
+    if (!confirm("Are you sure you want to delete this task?")) return;
+
+    try {
+      await deleteDoc(doc(db, "tasks", id));
+    } catch (err) {
+      // This catches the "Permission Denied" error from Firebase Rules
+      console.error("Delete failed:", err);
+      alert("⛔ Access Denied: Only the Admin can delete tasks.");
+    }
   };
 
   // --- Stats ---
@@ -266,11 +251,15 @@ export default function App() {
                       </button>
                       <span className={`text-lg ${isDone ? 'line-through text-slate-500' : 'text-slate-200'}`}>{task.text}</span>
                     </div>
-                    {task.createdBy === user.uid && (
-                      <button onClick={() => deleteTask(task.id)} className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 transition-opacity">
-                        <Trash2 size={18} />
-                      </button>
-                    )}
+                    
+                    {/* Delete Button (Visible to all, but logic is secured by backend) */}
+                    <button 
+                      onClick={() => deleteTask(task.id)} 
+                      className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 transition-opacity"
+                      title="Admin only"
+                    >
+                      <Trash2 size={18} />
+                    </button>
                   </div>
                   {task.completedBy?.length > 0 && (
                     <div className="mt-3 ml-10 flex items-center gap-2">
