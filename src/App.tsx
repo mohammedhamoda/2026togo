@@ -252,10 +252,10 @@ export default function App() {
                       <span className={`text-lg ${isDone ? 'line-through text-slate-500' : 'text-slate-200'}`}>{task.text}</span>
                     </div>
                     
-                    {/* Delete Button (Visible to all, but logic is secured by backend) */}
+                    {/* Delete Button (ALWAYS VISIBLE) */}
                     <button 
                       onClick={() => deleteTask(task.id)} 
-                      className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 transition-opacity"
+                      className="text-slate-600 hover:text-red-400 transition-colors p-2"
                       title="Admin only"
                     >
                       <Trash2 size={18} />
