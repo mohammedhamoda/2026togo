@@ -29,27 +29,37 @@ const PRESET_COLORS = [
   { name: 'Rose', value: '#f43f5e' },
 ];
 
-// --- GLOBAL SYNC LOGIC (UTC) ---
-const getUTCWeekId = () => {
-  const now = new Date();
-  const date = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-  date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
-  return `${date.getUTCFullYear()}-W${weekNo}`;
-};
+// --- CUSTOM 7-DAY CYCLE LOGIC ---
 
-const getTimeUntilUTCReset = () => {
+// 1. SET THIS DATE TO TODAY (or whenever you want the cycle to begin)
+// The format is YYYY-MM-DD. 
+const CYCLE_START_DATE = new Date("2026-02-18T00:00:00"); 
+
+// 2. This function calculates the ID and Time Left based on the start date above
+const getCycleData = () => {
   const now = new Date();
-  const currentDayUTC = now.getUTCDay(); 
-  const daysUntilMonday = (1 + 7 - currentDayUTC) % 7 || 7;
-  const nextMonday = new Date(Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate() + daysUntilMonday,
-    0, 0, 0, 0 
-  ));
-  return nextMonday.getTime() - now.getTime();
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const msPerWeek = msPerDay * 7;
+  
+  // Calculate time passed since the custom start date
+  let diff = now.getTime() - CYCLE_START_DATE.getTime();
+  
+  // Handle case if start date is in the future (default to Cycle 1)
+  if (diff < 0) diff = 0;
+
+  // Calculate which 7-day chunk we are in (0, 1, 2...)
+  const cycleIndex = Math.floor(diff / msPerWeek);
+
+  // Generate a Unique ID for this specific 7-day chunk
+  // This creates a fresh board for the new cycle. 
+  // Old tasks are NOT deleted, they are just associated with the previous ID.
+  const currentWeekId = `Cycle-${CYCLE_START_DATE.getFullYear()}-${cycleIndex + 1}`;
+
+  // Calculate exact time until the NEXT 7-day boundary
+  const nextResetTime = CYCLE_START_DATE.getTime() + ((cycleIndex + 1) * msPerWeek);
+  const timeLeftMs = nextResetTime - now.getTime();
+
+  return { weekId: currentWeekId, timeLeftMs };
 };
 
 // --- Component: Login Screen ---
@@ -74,7 +84,7 @@ export default function App() {
   const [tasks, setTasks] = useState([]);
   const [allUsers, setAllUsers] = useState({}); 
   const [newTask, setNewTask] = useState("");
-  const [timeLeft, setTimeLeft] = useState("");
+  const [timeLeftStr, setTimeLeftStr] = useState("");
   
   // -- CATEGORY STATES --
   const [categoryMode, setCategoryMode] = useState('existing'); // 'existing' or 'new'
@@ -87,7 +97,8 @@ export default function App() {
   const [newResourceUrl, setNewResourceUrl] = useState("");
   const [newResourceTitle, setNewResourceTitle] = useState("");
 
-  const weekId = getUTCWeekId();
+  // Get initial cycle data
+  const { weekId } = getCycleData();
 
   // 1. Auth & Initial Setup
   useEffect(() => {
@@ -114,25 +125,26 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Timer (Auto-Refresh)
+  // 2. Timer (Auto-Refresh based on Custom Cycle)
   useEffect(() => {
     const timer = setInterval(() => {
-      const diff = getTimeUntilUTCReset();
-      if (diff <= 0) {
-        setTimeLeft('Resetting...');
+      const { timeLeftMs } = getCycleData();
+      
+      if (timeLeftMs <= 0) {
+        setTimeLeftStr('Resetting...');
         window.location.reload();
       } else {
-        const d = Math.floor(diff / (1000 * 60 * 60 * 24));
-        const h = Math.floor((diff / (1000 * 60 * 60)) % 24);
-        const m = Math.floor((diff / (1000 * 60)) % 60);
-        const s = Math.floor((diff / 1000) % 60);
-        setTimeLeft(`${d}d ${h}h ${m}m ${s}s`);
+        const d = Math.floor(timeLeftMs / (1000 * 60 * 60 * 24));
+        const h = Math.floor((timeLeftMs / (1000 * 60 * 60)) % 24);
+        const m = Math.floor((timeLeftMs / (1000 * 60)) % 60);
+        const s = Math.floor((timeLeftMs / 1000) % 60);
+        setTimeLeftStr(`${d}d ${h}h ${m}m ${s}s`);
       }
     }, 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // 3. Listen to Tasks
+  // 3. Listen to Tasks (Using the new weekId)
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, "tasks"), where("weekId", "==", weekId));
@@ -212,7 +224,7 @@ export default function App() {
     try {
       await addDoc(collection(db, "tasks"), {
         text: newTask,
-        weekId: weekId,
+        weekId: weekId, // Uses the new ID
         createdAt: Date.now(),
         createdBy: user.uid,
         creatorName: user.displayName,
@@ -340,7 +352,7 @@ export default function App() {
           </h1>
           <div className="flex items-center gap-2 text-slate-400 text-sm mt-1">
              <Globe size={12} />
-             <span>UTC Week {weekId} • Resets in <span className="text-indigo-400 font-mono font-bold">{timeLeft}</span></span>
+             <span>{weekId} • Resets in <span className="text-indigo-400 font-mono font-bold">{timeLeftStr}</span></span>
           </div>
         </div>
         <button onClick={logout} className="text-slate-500 hover:text-white text-sm flex items-center gap-2">
@@ -354,7 +366,7 @@ export default function App() {
           
           {/* --- ADD TASK FORM --- */}
           <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-4 mb-8 shadow-xl">
-             <form onSubmit={addTask} className="flex flex-col gap-4">
+              <form onSubmit={addTask} className="flex flex-col gap-4">
                 
                 {/* 1. Category Selector */}
                 <div className="flex flex-wrap gap-4 items-center pb-4 border-b border-white/5">
@@ -382,9 +394,9 @@ export default function App() {
                       <div className="flex items-center gap-2 flex-1">
                          <Layers size={16} className="text-slate-500" />
                          <select 
-                            value={selectedCategory} 
-                            onChange={(e) => setSelectedCategory(e.target.value)}
-                            className="bg-slate-900 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:border-indigo-500 w-full md:w-auto min-w-[200px]"
+                           value={selectedCategory} 
+                           onChange={(e) => setSelectedCategory(e.target.value)}
+                           className="bg-slate-900 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:border-indigo-500 w-full md:w-auto min-w-[200px]"
                          >
                             {uniqueCategories.map(cat => (
                               <option key={cat.name} value={cat.name}>{cat.name}</option>
@@ -397,11 +409,11 @@ export default function App() {
                    {categoryMode === 'new' && (
                       <div className="flex flex-wrap items-center gap-2 flex-1 animate-in fade-in slide-in-from-left-2 duration-300">
                          <input 
-                            type="text"
-                            placeholder="Category Name (e.g., Marketing)"
-                            className="bg-slate-900 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:border-indigo-500 min-w-[150px]"
-                            value={newCatName}
-                            onChange={(e) => setNewCatName(e.target.value)}
+                           type="text"
+                           placeholder="Category Name (e.g., Marketing)"
+                           className="bg-slate-900 border border-white/10 text-white text-sm rounded-lg px-3 py-2 outline-none focus:border-indigo-500 min-w-[150px]"
+                           value={newCatName}
+                           onChange={(e) => setNewCatName(e.target.value)}
                          />
                          
                          {/* Color Picker Swatches */}
@@ -567,7 +579,7 @@ export default function App() {
               </div>
             ))}
 
-            {tasks.length === 0 && <div className="text-center py-12 text-slate-600 italic">No tasks yet. Create a category to get started.</div>}
+            {tasks.length === 0 && <div className="text-center py-12 text-slate-600 italic">No tasks yet for this new cycle. Create a category to get started.</div>}
           </div>
         </div>
 
