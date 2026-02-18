@@ -56,7 +56,7 @@ const getTimeUntilUTCReset = () => {
 const LoginScreen = () => (
   <div className="h-screen flex flex-col items-center justify-center bg-slate-900 text-white gap-6">
     <h1 className="text-5xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
-      Squad Weekly
+      Project 2026
     </h1>
     <button 
       onClick={signInWithGoogle}
